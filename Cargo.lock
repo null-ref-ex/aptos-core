@@ -4061,13 +4061,9 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
-<<<<<<< Updated upstream
- "thiserror 1.0.69",
-=======
  "thiserror",
  "tokio",
  "tonic 0.12.3",
->>>>>>> Stashed changes
 ]
 
 [[package]]
