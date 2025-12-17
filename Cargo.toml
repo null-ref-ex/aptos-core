@@ -51,6 +51,7 @@ members = [
     "config",
     "config/global-constants",
     "consensus",
+    "consensus/aptos-remote-signer",
     "consensus/consensus-types",
     "consensus/safety-rules",
     "crates/aptos",
@@ -442,6 +443,7 @@ aptos-retrier = { path = "crates/aptos-retrier" }
 aptos-rocksdb-options = { path = "storage/rocksdb-options" }
 aptos-rosetta = { path = "crates/aptos-rosetta" }
 aptos-runtimes = { path = "crates/aptos-runtimes" }
+aptos-remote-signer = { path = "consensus/aptos-remote-signer" }
 aptos-safety-rules = { path = "consensus/safety-rules" }
 aptos-schemadb = { path = "storage/schemadb" }
 aptos-scratchpad = { path = "storage/scratchpad" }

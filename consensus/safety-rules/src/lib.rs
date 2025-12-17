@@ -11,6 +11,7 @@ mod logging;
 mod persistent_safety_storage;
 mod process;
 mod remote_service;
+mod remote_signer_client;
 mod safety_rules;
 mod safety_rules_2chain;
 pub mod safety_rules_manager;
@@ -21,8 +22,8 @@ mod thread;
 pub use crate::{
     consensus_state::ConsensusState, error::Error,
     persistent_safety_storage::PersistentSafetyStorage, process::Process,
-    safety_rules::SafetyRules, safety_rules_manager::SafetyRulesManager,
-    t_safety_rules::TSafetyRules,
+    remote_signer_client::RemoteSignerClient, safety_rules::SafetyRules,
+    safety_rules_manager::SafetyRulesManager, t_safety_rules::TSafetyRules,
 };
 
 #[cfg(any(test, feature = "fuzzing"))]

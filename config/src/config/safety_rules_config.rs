@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     net::{SocketAddr, ToSocketAddrs},
     path::PathBuf,
+    time::Duration,
 };
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -200,6 +201,142 @@ impl InitialSafetyRulesConfig {
     }
 }
 
+/// TLS configuration for the remote signer client.
+///
+/// All three certificate paths are required for mutual TLS (mTLS) authentication.
+/// The client will present its certificate to the server, and verify the server's
+/// certificate against the provided CA.
+///
+/// # Example
+///
+/// ```yaml
+/// tls_config:
+///   ca_cert_path: "/etc/aptos/certs/ca.pem"
+///   client_cert_path: "/etc/aptos/certs/validator.pem"
+///   client_key_path: "/etc/aptos/certs/validator-key.pem"
+/// ```
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteSignerTlsConfig {
+    /// Path to CA certificate for verifying the server (PEM format)
+    pub ca_cert_path: PathBuf,
+    /// Path to client certificate for mutual TLS authentication (PEM format)
+    pub client_cert_path: PathBuf,
+    /// Path to client private key for mutual TLS authentication (PEM format)
+    pub client_key_path: PathBuf,
+}
+
+/// Configuration for connecting to a remote signer service.
+///
+/// The remote signer client delegates all consensus signing operations to
+/// a separate service via gRPC. This improves security by isolating private
+/// keys from the validator node.
+///
+/// # Production Example (with mTLS)
+///
+/// ```yaml
+/// safety_rules:
+///   service:
+///     type: remote_signer
+///     server_address: "https://signer.internal:8443"
+///     tls_config:
+///       ca_cert_path: "/etc/aptos/certs/ca.pem"
+///       client_cert_path: "/etc/aptos/certs/validator.pem"
+///       client_key_path: "/etc/aptos/certs/validator-key.pem"
+///     connect_timeout_ms: 5000
+///     request_timeout_ms: 10000
+///     max_retries: 3
+/// ```
+///
+/// # Testing Example (insecure)
+///
+/// ```yaml
+/// safety_rules:
+///   service:
+///     type: remote_signer
+///     server_address: "http://localhost:8080"
+///     allow_insecure: true
+/// ```
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteSignerConfig {
+    /// Server address including scheme and port.
+    ///
+    /// Use `https://` for TLS connections (required for production).
+    /// Use `http://` only with `allow_insecure: true` for testing.
+    ///
+    /// Examples: `"https://signer.internal:8443"`, `"http://localhost:8080"`
+    pub server_address: String,
+    /// TLS configuration for secure connections.
+    ///
+    /// Required unless `allow_insecure` is set to `true`.
+    /// Provides mutual TLS authentication where both the client and server
+    /// verify each other's certificates.
+    #[serde(default)]
+    pub tls_config: Option<RemoteSignerTlsConfig>,
+    /// Allow connections without TLS encryption.
+    ///
+    /// **WARNING**: Only enable this for local development and testing.
+    /// Insecure connections expose signing operations to network attacks.
+    ///
+    /// When `true` and `tls_config` is `None`, connects without TLS.
+    /// When `false` (default), `tls_config` must be provided.
+    #[serde(default)]
+    pub allow_insecure: bool,
+    /// Connection timeout in milliseconds.
+    ///
+    /// How long to wait when establishing a connection to the remote signer.
+    /// Default: 5000ms (5 seconds)
+    #[serde(default = "RemoteSignerConfig::default_connect_timeout_ms")]
+    pub connect_timeout_ms: u64,
+    /// Request timeout in milliseconds.
+    ///
+    /// How long to wait for each signing request to complete.
+    /// Default: 10000ms (10 seconds)
+    #[serde(default = "RemoteSignerConfig::default_request_timeout_ms")]
+    pub request_timeout_ms: u64,
+    /// Maximum number of retry attempts for failed requests.
+    ///
+    /// Uses exponential backoff between retries starting from `initial_backoff_ms`.
+    /// Default: 3
+    #[serde(default = "RemoteSignerConfig::default_max_retries")]
+    pub max_retries: u32,
+    /// Initial backoff delay in milliseconds for retry attempts.
+    ///
+    /// The backoff doubles with each retry, up to a maximum of 30 seconds.
+    /// Default: 100ms
+    #[serde(default = "RemoteSignerConfig::default_initial_backoff_ms")]
+    pub initial_backoff_ms: u64,
+}
+
+impl RemoteSignerConfig {
+    fn default_connect_timeout_ms() -> u64 {
+        5000
+    }
+
+    fn default_request_timeout_ms() -> u64 {
+        10000
+    }
+
+    fn default_max_retries() -> u32 {
+        3
+    }
+
+    fn default_initial_backoff_ms() -> u64 {
+        100
+    }
+
+    /// Returns the connect timeout as a Duration
+    pub fn connect_timeout(&self) -> Duration {
+        Duration::from_millis(self.connect_timeout_ms)
+    }
+
+    /// Returns the request timeout as a Duration
+    pub fn request_timeout(&self) -> Duration {
+        Duration::from_millis(self.request_timeout_ms)
+    }
+}
+
 /// Defines how safety rules should be executed
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type")]
@@ -213,6 +350,8 @@ pub enum SafetyRulesService {
     Serializer,
     /// This creates a separate thread to run safety rules, it is similar to a fork / exec style
     Thread,
+    /// Remote signer service via gRPC with mTLS authentication
+    RemoteSigner(RemoteSignerConfig),
 }
 
 impl SafetyRulesService {

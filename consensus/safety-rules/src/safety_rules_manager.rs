@@ -6,11 +6,14 @@ use crate::{
     persistent_safety_storage::PersistentSafetyStorage,
     process::ProcessService,
     remote_service::RemoteService,
+    remote_signer_client::RemoteSignerClient,
     serializer::{SerializerClient, SerializerService},
     thread::ThreadService,
     SafetyRules, TSafetyRules,
 };
-use aptos_config::config::{InitialSafetyRulesConfig, SafetyRulesConfig, SafetyRulesService};
+use aptos_config::config::{
+    InitialSafetyRulesConfig, RemoteSignerConfig, SafetyRulesConfig, SafetyRulesService,
+};
 use aptos_crypto::bls12381::PublicKey;
 use aptos_global_constants::CONSENSUS_KEY;
 use aptos_infallible::RwLock;
@@ -107,6 +110,7 @@ enum SafetyRulesWrapper {
     Process(ProcessService),
     Serializer(Arc<RwLock<SerializerService>>),
     Thread(ThreadService),
+    RemoteSigner(RemoteSignerClient),
 }
 
 pub struct SafetyRulesManager {
@@ -117,6 +121,10 @@ impl SafetyRulesManager {
     pub fn new(config: &SafetyRulesConfig) -> Self {
         if let SafetyRulesService::Process(conf) = &config.service {
             return Self::new_process(conf.server_address(), config.network_timeout_ms);
+        }
+
+        if let SafetyRulesService::RemoteSigner(conf) = &config.service {
+            return Self::new_remote_signer(conf.clone());
         }
 
         let storage = storage(config);
@@ -159,6 +167,15 @@ impl SafetyRulesManager {
         }
     }
 
+    /// Creates a new SafetyRulesManager that uses a remote signer service via gRPC.
+    pub fn new_remote_signer(config: RemoteSignerConfig) -> Self {
+        let client = RemoteSignerClient::new(config)
+            .expect("Failed to create remote signer client");
+        Self {
+            internal_safety_rules: SafetyRulesWrapper::RemoteSigner(client),
+        }
+    }
+
     pub fn client(&self) -> Box<dyn TSafetyRules + Send + Sync> {
         match &self.internal_safety_rules {
             SafetyRulesWrapper::Local(safety_rules) => {
@@ -169,6 +186,7 @@ impl SafetyRulesManager {
                 Box::new(SerializerClient::new(serializer_service.clone()))
             },
             SafetyRulesWrapper::Thread(thread) => Box::new(thread.client()),
+            SafetyRulesWrapper::RemoteSigner(client) => Box::new(client.clone()),
         }
     }
 }

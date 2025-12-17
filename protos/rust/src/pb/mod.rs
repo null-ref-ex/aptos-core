@@ -26,6 +26,13 @@ pub mod aptos {
             // @@protoc_insertion_point(aptos.remote_executor.v1)
         }
     }
+    pub mod safety_rules {
+        // @@protoc_insertion_point(attribute:aptos.safety_rules.v1)
+        pub mod v1 {
+            include!("aptos.safety_rules.v1.rs");
+            // @@protoc_insertion_point(aptos.safety_rules.v1)
+        }
+    }
     pub mod transaction {
         // @@protoc_insertion_point(attribute:aptos.transaction.v1)
         pub mod v1 {

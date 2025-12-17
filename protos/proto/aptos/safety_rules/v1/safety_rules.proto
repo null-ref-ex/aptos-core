@@ -1,0 +1,140 @@
+// Copyright © Aptos Foundation
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package aptos.safety_rules.v1;
+
+// Empty message for success responses
+message Empty {}
+
+// Error response with type and message
+message ErrorResponse {
+  string error_type = 1;
+  string message = 2;
+}
+
+// Consensus state information
+message ConsensusState {
+  uint64 epoch = 1;
+  uint64 last_voted_round = 2;
+  uint64 preferred_round = 3;
+  bytes waypoint = 4;  // BCS serialized Waypoint
+  bool in_validator_set = 5;
+}
+
+// Request for consensus state
+message ConsensusStateRequest {}
+
+// Response for consensus state
+message ConsensusStateResponse {
+  oneof result {
+    ConsensusState state = 1;
+    ErrorResponse error = 2;
+  }
+}
+
+// Request to initialize with epoch change proof
+message InitializeRequest {
+  bytes epoch_change_proof = 1;  // BCS serialized EpochChangeProof
+}
+
+// Response for initialize
+message InitializeResponse {
+  oneof result {
+    Empty success = 1;
+    ErrorResponse error = 2;
+  }
+}
+
+// Request to sign a proposal
+message SignProposalRequest {
+  bytes block_data = 1;  // BCS serialized BlockData
+}
+
+// Response for sign proposal
+message SignProposalResponse {
+  oneof result {
+    bytes signature = 1;  // BCS serialized bls12381::Signature
+    ErrorResponse error = 2;
+  }
+}
+
+// Request to sign timeout with QC
+message SignTimeoutWithQcRequest {
+  bytes timeout = 1;  // BCS serialized TwoChainTimeout
+  optional bytes timeout_cert = 2;  // BCS serialized Option<TwoChainTimeoutCertificate>
+}
+
+// Response for sign timeout with QC
+message SignTimeoutWithQcResponse {
+  oneof result {
+    bytes signature = 1;  // BCS serialized bls12381::Signature
+    ErrorResponse error = 2;
+  }
+}
+
+// Request to construct and sign vote (2-chain)
+message ConstructAndSignVoteTwoChainRequest {
+  bytes vote_proposal = 1;  // BCS serialized VoteProposal
+  optional bytes timeout_cert = 2;  // BCS serialized Option<TwoChainTimeoutCertificate>
+}
+
+// Response for construct and sign vote (2-chain)
+message ConstructAndSignVoteTwoChainResponse {
+  oneof result {
+    bytes vote = 1;  // BCS serialized Vote
+    ErrorResponse error = 2;
+  }
+}
+
+// Request to construct and sign order vote
+message ConstructAndSignOrderVoteRequest {
+  bytes order_vote_proposal = 1;  // BCS serialized OrderVoteProposal
+}
+
+// Response for construct and sign order vote
+message ConstructAndSignOrderVoteResponse {
+  oneof result {
+    bytes order_vote = 1;  // BCS serialized OrderVote
+    ErrorResponse error = 2;
+  }
+}
+
+// Request to sign commit vote
+message SignCommitVoteRequest {
+  bytes ledger_info = 1;  // BCS serialized LedgerInfoWithSignatures
+  bytes new_ledger_info = 2;  // BCS serialized LedgerInfo
+}
+
+// Response for sign commit vote
+message SignCommitVoteResponse {
+  oneof result {
+    bytes signature = 1;  // BCS serialized bls12381::Signature
+    ErrorResponse error = 2;
+  }
+}
+
+// The SafetyRules gRPC service for remote signing
+service SafetyRulesService {
+  // Get current consensus state
+  rpc ConsensusState(ConsensusStateRequest) returns (ConsensusStateResponse);
+
+  // Initialize with epoch change proof
+  rpc Initialize(InitializeRequest) returns (InitializeResponse);
+
+  // Sign a proposal (block data)
+  rpc SignProposal(SignProposalRequest) returns (SignProposalResponse);
+
+  // Sign timeout with QC
+  rpc SignTimeoutWithQc(SignTimeoutWithQcRequest) returns (SignTimeoutWithQcResponse);
+
+  // Construct and sign vote (2-chain)
+  rpc ConstructAndSignVoteTwoChain(ConstructAndSignVoteTwoChainRequest) returns (ConstructAndSignVoteTwoChainResponse);
+
+  // Construct and sign order vote
+  rpc ConstructAndSignOrderVote(ConstructAndSignOrderVoteRequest) returns (ConstructAndSignOrderVoteResponse);
+
+  // Sign commit vote
+  rpc SignCommitVote(SignCommitVoteRequest) returns (SignCommitVoteResponse);
+}
