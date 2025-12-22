@@ -71,7 +71,7 @@ use aptos_types::{
     ledger_info::{LedgerInfo, LedgerInfoWithSignatures},
 };
 use std::{sync::Arc, time::Duration};
-use tokio::{runtime::Runtime, sync::Mutex};
+use tokio::sync::Mutex;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, Identity};
 
 /// A client that implements [`TSafetyRules`] by making gRPC calls to a remote signing service.
@@ -89,23 +89,83 @@ use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, Identity
 ///
 /// Operations return [`Error`] on failure. The client automatically retries transient
 /// failures (network errors, timeouts) with exponential backoff.
+/// Holds either a dedicated runtime we created, or the handle to an existing runtime.
+enum RuntimeHandle {
+    /// We created this runtime and own it.
+    Owned(tokio::runtime::Runtime),
+    /// We're using an existing runtime (borrowed handle).
+    Borrowed(tokio::runtime::Handle),
+}
+
+impl RuntimeHandle {
+    /// Runs a future to completion.
+    ///
+    /// This method always uses a separate thread to call `block_on` to avoid
+    /// the "Cannot start a runtime from within a runtime" panic. This is necessary
+    /// because the `TSafetyRules` trait methods are synchronous, but they may be
+    /// called from within an async context (e.g., the consensus epoch manager).
+    fn block_on<F: std::future::Future>(&self, f: F) -> F::Output
+    where
+        F: Send,
+        F::Output: Send,
+    {
+        // Check if we're currently inside a tokio runtime context.
+        // If so, we need to run block_on on a separate thread to avoid panicking.
+        if tokio::runtime::Handle::try_current().is_ok() {
+            // We're inside a runtime - spawn a thread to run block_on
+            std::thread::scope(|s| {
+                s.spawn(|| match self {
+                    RuntimeHandle::Owned(rt) => rt.block_on(f),
+                    RuntimeHandle::Borrowed(handle) => handle.block_on(f),
+                })
+                .join()
+                .expect("Runtime thread panicked")
+            })
+        } else {
+            // We're not inside a runtime - safe to call block_on directly
+            match self {
+                RuntimeHandle::Owned(rt) => rt.block_on(f),
+                RuntimeHandle::Borrowed(handle) => handle.block_on(f),
+            }
+        }
+    }
+}
+
 pub struct RemoteSignerClient {
     client: Arc<Mutex<SafetyRulesServiceClient<Channel>>>,
-    runtime: Arc<Runtime>,
+    runtime: Arc<RuntimeHandle>,
     config: RemoteSignerConfig,
 }
 
 impl RemoteSignerClient {
     /// Creates a new RemoteSignerClient that connects to the specified remote signer service.
+    ///
+    /// This constructor detects whether it's being called from within an existing tokio
+    /// runtime. If so, it reuses that runtime's handle. If not, it creates a dedicated
+    /// runtime for gRPC operations.
     pub fn new(config: RemoteSignerConfig) -> Result<Self, Error> {
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_all()
-            .thread_name("remote-signer-client")
-            .build()
-            .map_err(|e| Error::InternalError(format!("Failed to create tokio runtime: {}", e)))?;
+        // Try to get a handle to an existing runtime first.
+        // This avoids the "Cannot start a runtime from within a runtime" panic.
+        let runtime_handle = match tokio::runtime::Handle::try_current() {
+            Ok(handle) => {
+                info!("RemoteSignerClient: Using existing tokio runtime");
+                RuntimeHandle::Borrowed(handle)
+            }
+            Err(_) => {
+                info!("RemoteSignerClient: Creating dedicated tokio runtime");
+                let runtime = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
+                    .enable_all()
+                    .thread_name("remote-signer-client")
+                    .build()
+                    .map_err(|e| {
+                        Error::InternalError(format!("Failed to create tokio runtime: {}", e))
+                    })?;
+                RuntimeHandle::Owned(runtime)
+            }
+        };
 
-        let client = runtime.block_on(Self::create_client(&config))?;
+        let client = runtime_handle.block_on(Self::create_client(&config))?;
 
         info!(
             "Created RemoteSignerClient connecting to {}",
@@ -114,7 +174,7 @@ impl RemoteSignerClient {
 
         Ok(Self {
             client: Arc::new(Mutex::new(client)),
-            runtime: Arc::new(runtime),
+            runtime: Arc::new(runtime_handle),
             config,
         })
     }
@@ -179,7 +239,8 @@ impl RemoteSignerClient {
     fn with_retry<F, T, Fut>(&self, operation: &str, f: F) -> Result<T, Error>
     where
         F: Fn(SafetyRulesServiceClient<Channel>) -> Fut,
-        Fut: std::future::Future<Output = Result<tonic::Response<T>, tonic::Status>>,
+        Fut: std::future::Future<Output = Result<tonic::Response<T>, tonic::Status>> + Send,
+        T: Send,
     {
         let mut backoff_ms = self.config.initial_backoff_ms;
         let mut attempts = 0;

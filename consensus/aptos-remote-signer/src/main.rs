@@ -24,8 +24,22 @@ use aptos_secure_storage::{KVStorage, Storage};
 use clap::Parser;
 use config::{InitialConfig, RemoteSignerServerConfig};
 use service::SafetyRulesServiceImpl;
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 use tonic::transport::{Certificate, Identity, Server, ServerTlsConfig};
+
+/// Connection statistics for tracking client connections.
+#[derive(Default)]
+struct ConnectionStats {
+    total_connections: AtomicU64,
+    active_connections: AtomicU64,
+}
 
 #[derive(Parser)]
 #[clap(
@@ -154,18 +168,57 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Starting remote signer service on {}", config.listen_address);
 
+    // Connection tracking
+    let connection_stats = Arc::new(ConnectionStats::default());
+    let stats_for_logging = connection_stats.clone();
+    let service_for_stats = Arc::new(service);
+    let service_clone = service_for_stats.clone();
+
+    // Spawn a task to periodically log statistics
+    let stats_task = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            let total = stats_for_logging.total_connections.load(Ordering::Relaxed);
+            let active = stats_for_logging.active_connections.load(Ordering::Relaxed);
+            if total > 0 {
+                info!(
+                    total_connections = total,
+                    active_connections = active,
+                    "Connection statistics"
+                );
+            }
+            // Also log signing statistics
+            service_clone.log_stats();
+        }
+    });
+
     // Handle shutdown signals
     let shutdown = async {
         tokio::signal::ctrl_c()
             .await
             .expect("Failed to install Ctrl+C handler");
-        info!("Received shutdown signal");
+        info!("Received shutdown signal, initiating graceful shutdown...");
     };
 
+    // Log when the server is ready
+    info!(
+        listen_address = %config.listen_address,
+        tls_enabled = config.tls.is_some(),
+        mtls_enabled = config.tls.as_ref().map(|t| t.client_ca_cert_path.is_some()).unwrap_or(false),
+        "Remote signer service is ready and accepting connections"
+    );
+
+    // Wrap service to track connections
+    let grpc_service = SafetyRulesServiceServer::from_arc(service_for_stats);
+
     server_builder
-        .add_service(SafetyRulesServiceServer::new(service))
+        .add_service(grpc_service)
         .serve_with_shutdown(listen_addr, shutdown)
         .await?;
+
+    // Cancel the stats task
+    stats_task.abort();
 
     info!("Remote signer service stopped");
     Ok(())

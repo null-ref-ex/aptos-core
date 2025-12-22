@@ -3888,7 +3888,7 @@ dependencies = [
  "hex",
  "serde",
  "serde_yaml 0.8.26",
- "thiserror",
+ "thiserror 1.0.69",
  "tokio",
  "tonic 0.12.3",
 ]
@@ -4061,7 +4061,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror",
+ "thiserror 1.0.69",
  "tokio",
  "tonic 0.12.3",
 ]
